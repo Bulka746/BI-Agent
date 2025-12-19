@@ -31,7 +31,7 @@ The environment variables `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`,
 MinIO client. Defaults are provided for local development.
 
 ```
-export MINIO_ENDPOINT="minio:9000"
+export MINIO_ENDPOINT="localhost:9000"
 export MINIO_ACCESS_KEY="minioadmin"
 export MINIO_SECRET_KEY="minioadmin"
 export MINIO_BUCKET_NAME="bi-agent-logs"
@@ -44,29 +44,22 @@ logging purposes.
 
 try:
     from minio import Minio
-    from minio.error import S3Error  # noqa: F401
+    from minio.error import S3Error 
     MINIO_AVAILABLE = True
 except ImportError:
-    # MinIO library is optional. When unavailable, logging will be skipped.
     MINIO_AVAILABLE = False
 
 if MINIO_AVAILABLE:
-    # Read configuration from environment or use sensible defaults.
     MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
     MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
     MINIO_BUCKET = os.getenv("MINIO_BUCKET_NAME", "bi-agent-logs")
-    # Initialize the MinIO client. We disable TLS (`secure=False`) because
-    # local MinIO deployments often use plain HTTP. If your deployment
-    # requires TLS, set `secure=True` and ensure the endpoint uses `https`.
     minio_client = Minio(
         endpoint=MINIO_ENDPOINT,
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
         secure=False
     )
-    # Ensure the bucket exists before uploading objects. Create it if
-    # necessary. Errors are caught and printed but do not halt execution.
     try:
         if not minio_client.bucket_exists(MINIO_BUCKET):
             minio_client.make_bucket(MINIO_BUCKET)
@@ -110,10 +103,8 @@ def log_to_minio(state: dict, type_of_content: str, content: str) -> str | None:
     """
     if not MINIO_AVAILABLE or minio_client is None or MINIO_BUCKET is None:
         print("MinIO client unavailable; skipping persistence for", type_of_content)
-        # still increment step to keep numbering consistent
         state["step_num"] = state.get("step_num", 0) + 1
         return None
-    # increment the step counter
     step_num = state.get("step_num", 0) + 1
     state["step_num"] = step_num
     chat_id = state.get("chat_id")
@@ -125,7 +116,6 @@ def log_to_minio(state: dict, type_of_content: str, content: str) -> str | None:
         "content": content,
         "step_num": step_num,
     }
-    # Use a hierarchical object key: <chat_id>/<step_num>_<type>.json
     object_name = f"{chat_id}/{step_num}_{type_of_content}.json"
     data = json.dumps(record, ensure_ascii=False).encode("utf-8")
     try:
@@ -166,22 +156,20 @@ def save_figure_to_minio(state: dict) -> str | None:
         print("MinIO client unavailable; skipping image upload")
         return None
     chat_id = state.get("chat_id")
-    # Tentatively determine the next step number without incrementing state
+
     next_step = state.get("step_num", 0) + 1
     object_name = f"{chat_id}/{next_step}_viz.png"
-    # Capture the current figure. Using gcf() ensures that the most
-    # recently created figure is saved even if matplotlib's internal
-    # state has been modified by user code (e.g. calling plt.show()).
+
     buf = io.BytesIO()
     try:
         fig = plt.gcf()
     except Exception:
-        # Fallback: use plt to save whatever is currently active
+
         fig = None
     if fig is not None:
         fig.savefig(buf, format="png")
     else:
-        # Fallback in case gcf() fails
+
         plt.savefig(buf, format="png")
     buf.seek(0)
     try:
@@ -195,15 +183,13 @@ def save_figure_to_minio(state: dict) -> str | None:
     except Exception as upload_err:
         print("Warning: failed to upload image to MinIO:", upload_err)
         return None
-    # Generate a pre-signed URL for retrieval
+
     try:
         url = minio_client.presigned_get_object(
             MINIO_BUCKET, object_name, expires=timedelta(days=7)
         )
     except Exception:
-        # Fallback to constructing a static path. This assumes the bucket is
-        # publicly accessible at the endpoint; adjust accordingly for your
-        # deployment.
+
         proto = "https" if minio_client._secure else "http"
         url = f"{proto}://{MINIO_ENDPOINT}/{MINIO_BUCKET}/{object_name}"
     return url
@@ -258,7 +244,7 @@ class AgentState(TypedDict):
 
     schema: dict | None 
 
-    intent: str | None  # например: "analysis_request"
+    intent: str | None  
     clarification_required: bool | None
     questions: list[str] | None
 
@@ -269,13 +255,8 @@ class AgentState(TypedDict):
     sql_error: str | None
     sql_fix_attempts: int
 
-    # Additional metadata for chat logging
-    # A unique identifier for each conversation session. It is generated
-    # once when the agent starts and remains constant throughout the flow.
     chat_id: str
-    # A human‑readable chat name derived from the initial query or UUID.
     chat_name: str
-    # Step counter used for ordering log entries when persisting to MinIO.
     step_num: int
 
 
@@ -427,8 +408,7 @@ USER_QUERY:
     print("\n=== INTENT LLM ===")
     print(response.content)
 
-    # Persist clarifying questions, if any, to MinIO. Only log when
-    # clarification is required and questions are provided by the LLM.
+
     if parsed.get("clarification_required") and parsed.get("questions"):
         questions_text = "\n".join(parsed["questions"])
         log_to_minio(state, "clarification_questions", questions_text)
@@ -467,7 +447,6 @@ def clarification_node(state: AgentState) -> dict:
     base = state.get("merged_input") or state["user_input"]
     merged = f"{base}\n\nУТОЧНЕНИЕ:\n{clarification}"
 
-    # Persist the user's clarification response to MinIO.
     log_to_minio(state, "clarification_response", clarification)
 
     return {
@@ -746,9 +725,7 @@ STAGE: VISUALIZATION_PLANNING
 
     parsed = safe_json_loads(response.content)
 
-    # Persist the analytical summary to MinIO. The analytics text provides
-    # business insights derived from the data, so log it with the
-    # appropriate content type. This also increments the step counter.
+
     if parsed.get("analytics"):
         log_to_minio(state, "analytics", parsed["analytics"])
 
@@ -778,39 +755,30 @@ def viz_exec_node(state: AgentState) -> dict:
         "df": df,
     }
 
-    # Override plt.show inside the executed code to prevent it from clearing
-    # figures prematurely. The replacement will simply draw the canvas.
+
     original_show = plt.show
     def _noop_show(*args, **kwargs):
-        # Draw without closing the figure
         plt.draw()
     plt.show = _noop_show
 
     try:
         exec(code, exec_globals)
     finally:
-        # Restore the original show method regardless of success/failure
         plt.show = original_show
 
-    # After executing the user code, ensure that the figure is drawn at
-    # least once so that buffers are populated.
+
     try:
         plt.draw()
     except Exception:
         pass
 
-    # Save the generated visualization to MinIO and obtain a URL.
     image_url = save_figure_to_minio(state)
     if image_url:
-        # Persist the URL of the uploaded image as a separate log entry.
         log_to_minio(state, "image_link", image_url)
 
-    # Now display the figure using the original show method to allow
-    # interactive environments (like notebooks) to render it properly.
     try:
         original_show()
     except Exception:
-        # If showing fails (e.g. headless environment), silently ignore
         pass
 
     return {}
@@ -868,15 +836,7 @@ compiled = graph.compile()
 if __name__ == "__main__":
     user_query = input("Введите запрос:")
 
-    # Generate unique identifiers for the conversation. `chat_id` is a
-    # universally unique identifier, while `chat_name` is derived from the
-    # user query for readability. Non‑alphanumeric characters are replaced
-    # with underscores. A fallback using a UUID prefix is used if the query
-    # lacks discernible words.
-    # Generate a unique chat identifier and a human‑readable name. The
-    # identifier is a UUID. The name is derived from the current
-    # timestamp to avoid duplicating the user's question and to allow
-    # subsequent retrieval. Format: chat_YYYYMMDD_HHMMSS.
+
     chat_id = str(uuid.uuid4())
     from datetime import datetime
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -898,7 +858,6 @@ if __name__ == "__main__":
         "sql_error": None,
         "sql_fix_attempts": 0,
 
-        # Metadata for logging
         "chat_id": chat_id,
         "chat_name": chat_name,
         "step_num": 0,
@@ -906,8 +865,6 @@ if __name__ == "__main__":
 
     print("USER INPUT:", initial_state["user_input"])
 
-    # Log the initial prompt as the first event. This call will increment
-    # `step_num` in `initial_state` to 1 and persist the prompt to MinIO.
     log_to_minio(initial_state, "initial_prompt", user_query)
 
     result_state = compiled.invoke(initial_state)
