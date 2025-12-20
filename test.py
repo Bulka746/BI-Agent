@@ -229,7 +229,7 @@ SYSTEM_PROMPT = """
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
-    api_key="sk-pN7mbpwi3acKv4tu4iG8Uw",
+    api_key="",
     base_url="https://api.artemox.com/v1",  # или свой прокси / gateway
     model="gpt-5.1",
     temperature=0.1,
